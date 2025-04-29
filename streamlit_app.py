@@ -1,7 +1,18 @@
+"""
+MAC Analyzer – Streamlit app (re‑escrito do zero)
+
+✓ Carrega CSV com colunas contendo MACs (ex.: "mac" ou "address").
+✓ Baixa lista oficial de fabricantes (IEEE OUI) ou usa fallback interno.
+✓ Classifica fabricante & tipo de dispositivo.
+✓ Exibe contagens de MACs únicos + gráficos de barras (Altair) para:
+   • Tipos de dispositivo  • Marcas (Top 15)  • Dispositivos únicos por marca
+"""
+
 from __future__ import annotations
 
 import datetime
 import io
+import textwrap
 from pathlib import Path
 from typing import Dict, Tuple
 
