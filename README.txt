@@ -1,0 +1,1 @@
+Versão final do painel com gráficos e classificação offline. Coloque oui.csv.gz ao lado.
