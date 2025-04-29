@@ -19,6 +19,8 @@ df["prefix"] = df["mac_clean"].str[:6]
 df["prefix_fmt"] = df["prefix"].str[:2] + ":" + df["prefix"].str[2:4] + ":" + df["prefix"].str[4:6]
 df["vendor"] = df["prefix_fmt"].apply(oui_lookup)
 
+st.write("Exemplo:", oui_lookup("A4:DA:22:00:11:22"))
+
 def classificar(v: str) -> str:
     v = v.upper()
     if "APPLE" in v or "IPHONE" in v: return "Smartphone"
