@@ -14,8 +14,9 @@ import datetime
 import io
 import textwrap
 from pathlib import Path
-from oui_loader import oui_lookup
 from typing import Dict, Tuple
+from oui_loader import oui_lookup
+
 
 import pandas as pd
 import requests
@@ -37,6 +38,8 @@ st.title("📶 MAC Analyzer – Painel de Dispositivos Detectados")
 # ----------------------------------------------------------------------------
 # Funções utilitárias
 # ----------------------------------------------------------------------------
+
+vendor = oui_lookup(mac)
 
 @st.cache_data(show_spinner=False)
 def load_official_oui() -> pd.DataFrame:
