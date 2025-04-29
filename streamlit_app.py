@@ -14,6 +14,7 @@ import datetime
 import io
 import textwrap
 from pathlib import Path
+from oui_loader import oui_lookup
 from typing import Dict, Tuple
 
 import pandas as pd
