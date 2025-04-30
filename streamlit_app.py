@@ -30,9 +30,8 @@ def detectar_marca(row):
 
 def detectar_tipo(row):
     raw = " ".join(
-    str(v).lower()
-    for v in row.values()
-    if pd.notna(v) and hasattr(v, '__str__')
+        str(v).lower() if hasattr(v, 'lower') else str(v).lower()
+        for v in row.values() if pd.notna(v)
     )
 
     if any(k in raw for k in ["airpods", "buds", "earbuds", "beats"]): return "Fones"
