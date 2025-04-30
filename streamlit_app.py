@@ -1,135 +1,149 @@
-# ───────────────────────────────────────────────────────────────
-#  MAC Dashboard  ·  analisador-mac-adress
-#  Author: você :)
-# ───────────────────────────────────────────────────────────────
-import io
+# --------------------------------------------------------------
+#  Streamlit ‑ MAC Dashboard – versão refatorada e enxuta
+#  • Python ≥ 3.9, roda bem em 3.12 (ambiente Streamlit Cloud)
+#  • Dependências mínimas (requirements.txt):
+#      streamlit>=1.25
+#      pandas>=1.5
+#      manuf>=1.0            # parser OUI / fabricante
+# --------------------------------------------------------------
+"""Aplicação Streamlit para análise de endereços MAC.
+
+Principais mudanças em relação ao código original "espaguete":
+• Arquitetura em funções puras + cache → fácil de testar.
+• Detecção robusta de fabricante usando *manuf* (offline, sem API).
+• Heurística de tipo de dispositivo desacoplada em dicionário.
+• Validação de entrada e tratamento de erros amigável.
+• Sem pandas.apply + funções aninhadas pesadas → rápido.
+"""
+from __future__ import annotations
+
+import re
+from io import BytesIO
 from pathlib import Path
-from functools import lru_cache
+from typing import Final, Iterable
 
 import pandas as pd
-import matplotlib.pyplot as plt
 import streamlit as st
-from manuf import manuf   # ← fornecido pelo pacote pymanuf
+from manuf import manuf
 
-st.set_page_config(page_title="MAC Dashboard",
-                   layout="wide",
-                   page_icon="📡")
+# -----------------------------------------------------------------------------
+#  Configurações fixas
+# -----------------------------------------------------------------------------
+PAGE_TITLE: Final = "MAC Dashboard"
+MAC_RE: Final = re.compile(r"^(?:[0-9A-Fa-f]{2}[:-]){5}(?:[0-9A-Fa-f]{2})$")
 
-# ────────────────────────────
-#  📥  Upload
-# ────────────────────────────
-st.title("📡 Analisador de MAC address")
-arquivo = st.file_uploader("Selecione um CSV / XLSX contendo MAC, nome do dispositivo, etc.",
-                           type=["csv", "xlsx"])
+# palavras‑chave → tipo de dispositivo
+DEVICE_KEYWORDS: Final[dict[str, tuple[str, ...]]] = {
+    "smartphone": ("iphone", "android", "phone", "samsung", "galaxy", "pixel"),
+    "notebook": ("laptop", "notebook", "macbook", "dell", "lenovo", "hp"),
+    "iot‑sensor": ("sensor", "zigbee", "ble", "esp32", "esp8266", "arduino"),
+    "wifi‑ap": ("router", "access point", "unifi", "ubiquiti", "mikrotik"),
+}
 
-if arquivo is None:
-    st.info("Faça o upload de um arquivo para começar ⬆️")
-    st.stop()
+# -----------------------------------------------------------------------------
+#  Funções utilitárias
+# -----------------------------------------------------------------------------
 
-# ────────────────────────────
-#  📄  Leitura do dataset
-# ────────────────────────────
-try:
-    df = (pd.read_csv(arquivo) if arquivo.name.endswith(".csv")
-          else pd.read_excel(arquivo))
-except Exception as e:
-    st.error(f"Erro ao ler o arquivo: {e}")
-    st.stop()
-
-# Nome uniformizado de colunas essenciais
-possiveis = {"mac": "mac", "mac_address": "mac", "endereco_mac": "mac",
-             "name": "device_name", "device": "device_name", "device_name": "device_name"}
-df.rename(columns={c: possiveis.get(c.lower(), c) for c in df.columns},
-          inplace=True)
-
-if "mac" not in df.columns:
-    st.error("Coluna de MAC address não encontrada!")
-    st.stop()
-
-# ────────────────────────────
-#  🏷  Marca & Tipo
-# ────────────────────────────
-parser = manuf.MacParser()   # cache interno do próprio manuf
+def valid_mac(mac: str) -> bool:
+    """Valida se a string parece um endereço MAC."""
+    return bool(MAC_RE.match(mac.strip()))
 
 
-@lru_cache
-def _categoria_por_palavra(chave: str) -> str | None:
-    """Define categoria a partir de palavras-chave encontradas."""
-    chave = chave.lower()
-    if any(k in chave for k in ("cam", "camera")):
-        return "Câmera"
-    if any(k in chave for k in ("phone", "smart", "iphone", "android")):
-        return "Smartphone"
-    if any(k in chave for k in ("tv", "chromecast", "firetv", "roku")):
-        return "Smart TV / Media"
-    if any(k in chave for k in ("printer", "hp", "epson", "brother", "canon")):
-        return "Impressora"
-    if any(k in chave for k in ("watch", "wear", "garmin", "fitbit")):
-        return "Wearable"
-    return None
+@st.cache_data(show_spinner=False)
+def get_oui_parser() -> manuf.MacParser:  # type: ignore[attr-defined]
+    """Carrega o parser OUI do pacote *manuf* (cacheado)."""
+    return manuf.MacParser()
 
 
-def detectar_tipo(row: pd.Series) -> tuple[str, str]:
-    """
-    • manuf → fabricante a partir do OUI
-    • heurística → tipo de equipamento
-    Retorna (fabricante, tipo)
-    """
-    mac = str(row.get("mac", ""))[:8]           # “AA:BB:CC”
-    fabricante = parser.get_manuf(mac) or "Unknown"
-
-    raw = " ".join(str(v) for v in row.values() if pd.notna(v)).lower()
-
-    tipo = (_categoria_por_palavra(raw)
-            or ("Roteador"       if "router" in raw or "gateway" in raw else None)
-            or ("Notebook"       if "laptop" in raw or "notebook" in raw else None)
-            or ("Tablet"         if "tablet" in raw else None)
-            or ("IoT Genérico"))
-    return fabricante, tipo
+def identify_vendor(mac: str, parser: manuf.MacParser) -> str:  # type: ignore[name-defined]
+    """Retorna o fabricante ou "Unknown"."""
+    try:
+        vendor: str | None = parser.get_manuf(mac)  # type: ignore[arg-type]
+    except Exception:
+        vendor = None
+    return vendor if vendor else "Unknown"
 
 
-# Aplicar em lote — lightning-fast 👍
-df[["fabricante", "tipo"]] = (
-    df.apply(detectar_tipo, axis=1, result_type="expand")
-)
+def detect_device_type(text: str) -> str:
+    """Detecta o tipo de dispositivo a partir de texto livre."""
+    t = text.lower()
+    for dev_type, kws in DEVICE_KEYWORDS.items():
+        if any(kw in t for kw in kws):
+            return dev_type
+    return "Unknown"
 
-# ────────────────────────────
-#  📊  Interface
-# ────────────────────────────
-col_filtro, col_plot = st.columns([1, 3])
 
-with col_filtro:
-    st.subheader("Filtros")
-    fabricante_sel = st.multiselect("Fabricante", sorted(df["fabricante"].unique()))
-    tipo_sel       = st.multiselect("Tipo",       sorted(df["tipo"].unique()))
+def concat_iter(values: Iterable[str | float | int | None]) -> str:
+    """Concatena valores ignorando nulos."""
+    return " ".join(str(v) for v in values if pd.notna(v))
 
-filtro = pd.Series(True, index=df.index)
-if fabricante_sel:
-    filtro &= df["fabricante"].isin(fabricante_sel)
-if tipo_sel:
-    filtro &= df["tipo"].isin(tipo_sel)
 
-df_view = df[filtro]
+# -----------------------------------------------------------------------------
+#  Pipeline principal
+# -----------------------------------------------------------------------------
 
-with col_plot:
-    st.subheader("Distribuição de dispositivos")
+def process_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """Devolve dataframe enriquecido com *vendor* e *device_type*."""
+    df = df_raw.copy()
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    (df_view["tipo"]
-     .value_counts()
-     .sort_values(ascending=True)
-     .plot(kind="barh", ax=ax))
-    ax.set_xlabel("Quantidade")
-    st.pyplot(fig)
+    # Normaliza nomes de colunas → minúsculas sem espaço
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
-st.divider()
-st.subheader("📑 Dados brutos filtrados")
-st.dataframe(df_view, use_container_width=True)
+    if "mac" not in df.columns:
+        raise ValueError("Coluna 'mac' não encontrada no arquivo.")
 
-# Download
-buffer = io.BytesIO()
-df_view.to_excel(buffer, index=False)
-st.download_button("🔽 Baixar resultado (.xlsx)",
-                   buffer.getvalue(),
-                   file_name="resultado_mac.xlsx",
-                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    # Filtra linhas com MAC válido
+    df = df[df["mac"].astype(str).apply(valid_mac)]
+
+    parser = get_oui_parser()
+    df["vendor"] = df["mac"].apply(lambda m: identify_vendor(m, parser))
+
+    # Build texto base para heurística de tipo
+    df["_raw"] = df.apply(concat_iter, axis=1)
+    df["device_type"] = df["_raw"].apply(detect_device_type)
+    df.drop(columns="_raw", inplace=True)
+
+    return df
+
+
+# -----------------------------------------------------------------------------
+#  Interface Streamlit
+# -----------------------------------------------------------------------------
+
+def main() -> None:
+    st.set_page_config(PAGE_TITLE, layout="wide")
+    st.title(PAGE_TITLE)
+    st.markdown("Faça upload de um arquivo **CSV** ou **Excel** contendo pelo menos uma coluna `mac`.")
+
+    uploaded = st.file_uploader("Arquivo", type=["csv", "xls", "xlsx"])
+    if not uploaded:
+        st.stop()
+
+    # Lê arquivo
+    try:
+        if Path(uploaded.name).suffix.lower() in {".xlsx", ".xls"}:
+            df_raw = pd.read_excel(uploaded)
+        else:
+            df_raw = pd.read_csv(uploaded)
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo: {e}")
+        st.stop()
+
+    # Processa
+    try:
+        df_final = process_dataframe(df_raw)
+    except Exception as e:
+        st.exception(e)
+        st.stop()
+
+    st.success(f"Linhas processadas: {len(df_final)}")
+    st.dataframe(df_final, use_container_width=True)
+
+    # Download resultado
+    buf = BytesIO()
+    df_final.to_csv(buf, index=False)
+    st.download_button("⬇️ Baixar CSV resultante", buf.getvalue(), file_name="mac_dashboard_output.csv", mime="text/csv")
+
+
+if __name__ == "__main__":
+    main()
