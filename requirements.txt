@@ -1,4 +1,4 @@
-streamlit>=1.44
-pandas>=2.2
-matplotlib>=3.8
-manuf==1.1.4          # lookup de fabricantes OUI
+streamlit>=1.25
+pandas>=1.5
+manuf>=1.0      # banco OUI offline
+openpyxl>=3.1    # leitura de arquivos .xlsx
